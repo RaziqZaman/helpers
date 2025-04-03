@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
 
 # Architecture from https://arxiv.org/abs/2208.01403
-# testing
 
 class VAE(nn.Module):
     def __init__(self, input_dim, latent_dim=32):
@@ -69,8 +70,8 @@ def train_vae(
         model: VAE, 
         optimizer: torch.optim.Optimizer,
         dataloader: DataLoader, 
-        n_epochs: int = 100,
-        save_epochs: int = 10,
+        n_epochs: int = 120,
+        save_epochs: int = 12,
         save_path: str = "vae.pt"
     ):
     model.train()
@@ -90,4 +91,63 @@ def train_vae(
             torch.save(model.state_dict(), save_path)
 
         print(f"Epoch {epoch} |loss: {loss.item()}")
-    
+
+# processing
+
+# Load your CSV
+csv_file = "master_trips.csv"
+df = pd.read_csv(csv_file)
+
+# Identify categorical columns
+categorical_columns = ["category_column1", "category_column2"]  # Update with actual column names
+numeric_columns = [col for col in df.columns if col not in categorical_columns]
+
+# One-hot encode categorical columns
+df_encoded = pd.get_dummies(df, columns=categorical_columns)
+
+# Normalize numerical data
+scaler = MinMaxScaler()
+df_encoded[numeric_columns] = scaler.fit_transform(df_encoded[numeric_columns])
+
+# Convert to tensor
+data_tensor = torch.tensor(df_encoded.values, dtype=torch.float32)
+
+# Define input dimensions
+input_dim = data_tensor.shape[1]  # Number of features in your CSV
+latent_dim = 32  # Adjust if needed
+
+# Initialize model and optimizer
+vae = VAE(input_dim, latent_dim)
+optimizer = torch.optim.Adam(vae.parameters(), lr=1e-3)
+
+# Train the VAE
+train_vae(vae, optimizer, dataloader, n_epochs=60, save_path="vae_model.pth")
+
+# Load trained model (if needed)
+vae.load_state_dict(torch.load("vae_model.pth"))
+vae.eval()
+
+# Generate synthetic data
+n_samples = 1000  # Adjust based on how much augmented data you need
+generated_data = vae.sample(n_samples)
+
+# Convert to a Pandas DataFrame
+generated_df = pd.DataFrame(generated_data.numpy(), columns=df.columns)
+
+# Save to CSV
+generated_df.to_csv("augmented_data.csv", index=False)
+
+# Convert generated tensor to DataFrame
+generated_df = pd.DataFrame(generated_data.numpy(), columns=df_encoded.columns)
+
+# Reverse normalization for numeric columns
+generated_df[numeric_columns] = scaler.inverse_transform(generated_df[numeric_columns])
+
+# Reverse one-hot encoding
+for col in categorical_columns:
+    category_prefix = [c for c in generated_df.columns if c.startswith(col + "_")]
+    generated_df[col] = generated_df[category_prefix].idxmax(axis=1).str[len(col) + 1:]
+    generated_df.drop(columns=category_prefix, inplace=True)
+
+# Save final augmented dataset
+generated_df.to_csv("augmented_data_decoded.csv", index=False)
