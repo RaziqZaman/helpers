@@ -95,11 +95,13 @@ def train_vae(
 # processing
 
 # Load your CSV
-csv_file = "master_trips.csv"
+csv_file = "trips_vae_input_max12.csv"
 df = pd.read_csv(csv_file)
 
 # Identify categorical columns
-categorical_columns = ["category_column1", "category_column2"]  # Update with actual column names
+categorical_columns = ['household_id', 'area_type', 'home_state_county_fips', 'home_type', 'home_ownership',
+                        'person_id', 'age_group', 'gender', 'race_ethnicity', 'race_ethnicity_hispanic', 'license', 'employment_status', 'work_bmc_taz', 'student_status',
+                        'tripid', 'persno', 'tripno', 'o_activity', 'o_state_county_fips', 'o_bmc_taz', 'd_activity', 'd_state_county_fips', 'd_bmc_taz', 'travel_mode']  # Update with actual column names
 numeric_columns = [col for col in df.columns if col not in categorical_columns]
 
 # One-hot encode categorical columns
@@ -113,8 +115,8 @@ df_encoded[numeric_columns] = scaler.fit_transform(df_encoded[numeric_columns])
 data_tensor = torch.tensor(df_encoded.values, dtype=torch.float32)
 
 # Define input dimensions
-input_dim = data_tensor.shape[1]  # Number of features in your CSV
-latent_dim = 32  # Adjust if needed
+input_dim = data_tensor.shape[216]  # Number of features in your CSV
+latent_dim = 108  # Adjust if needed
 
 # Initialize model and optimizer
 vae = VAE(input_dim, latent_dim)
@@ -128,7 +130,7 @@ vae.load_state_dict(torch.load("vae_model.pth"))
 vae.eval()
 
 # Generate synthetic data
-n_samples = 1000  # Adjust based on how much augmented data you need
+n_samples = 5040  # Adjust based on how much augmented data you need
 generated_data = vae.sample(n_samples)
 
 # Convert to a Pandas DataFrame
