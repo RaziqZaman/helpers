@@ -100,8 +100,10 @@ df = pd.read_csv(csv_file)
 
 # Identify categorical columns
 categorical_columns = ['household_id', 'area_type', 'home_state_county_fips', 'home_type', 'home_ownership',
-                        'person_id', 'age_group', 'gender', 'race_ethnicity', 'race_ethnicity_hispanic', 'license', 'employment_status', 'work_bmc_taz', 'student_status',
-                        'tripid', 'persno', 'tripno', 'o_activity', 'o_state_county_fips', 'o_bmc_taz', 'd_activity', 'd_state_county_fips', 'd_bmc_taz', 'travel_mode']  # Update with actual column names
+                        'person_id', 'age_group', 'gender', 'race_ethnicity', 'race_ethnicity_hispanic', 'license', 'employment_status', 'work_bmc_taz', 'student_status']  # Update with actual column names
+trip_variables = ['tripid', 'o_activity', 'o_state_county_fips', 'o_bmc_taz', 'd_activity', 'd_state_county_fips', 'd_bmc_taz', 'travel_mode']
+new_vars = [f"{var}-trip{i}" for i in range(1, 13) for var in trip_variables]
+categorical_columns += new_vars
 numeric_columns = [col for col in df.columns if col not in categorical_columns]
 
 # One-hot encode categorical columns
@@ -130,7 +132,7 @@ vae.load_state_dict(torch.load("vae_model.pth"))
 vae.eval()
 
 # Generate synthetic data
-n_samples = 5040  # Adjust based on how much augmented data you need
+n_samples = 120  # Adjust based on how much augmented data you need
 generated_data = vae.sample(n_samples)
 
 # Convert to a Pandas DataFrame
