@@ -6,14 +6,15 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import train_test_split
 
-# === VAE Definition ===
+# === VAE Class Definition ===
 
 class VAE(nn.Module):
     def __init__(self, input_dim, latent_dim=32):
         super(VAE, self).__init__()
         self.latent_dim = latent_dim
+        
+        # Encoder network
         self.encoder = nn.Sequential(
             nn.LeakyReLU(0.2),
             nn.Linear(input_dim, 128),
@@ -21,15 +22,19 @@ class VAE(nn.Module):
             nn.Linear(128, 64),
             nn.LeakyReLU(0.2),
         )
+        
+        # Mean and log-variance outputs
         self.fc_mu = nn.Linear(64, latent_dim)
         self.fc_sigma = nn.Linear(64, latent_dim)
+        
+        # Decoder network
         self.decoder = nn.Sequential(
             nn.Linear(latent_dim, 64),
             nn.LeakyReLU(0.2),
             nn.Linear(64, 128),
             nn.LeakyReLU(0.2),
             nn.Linear(128, input_dim),
-            nn.Sigmoid()
+            nn.Sigmoid()  # Activation for reconstruction
         )
     
     def encode(self, x):
@@ -39,23 +44,25 @@ class VAE(nn.Module):
         return mu, sigma
 
     def reparameterize(self, mu, sigma):
-        std = torch.exp(0.5 * sigma)
-        eps = torch.randn_like(std)
-        return mu + eps * std
+        std = torch.exp(0.5 * sigma)  # Variance = exp(sigma)
+        eps = torch.randn_like(std)   # Random noise
+        return mu + eps * std  # Latent variable z
 
     def decode(self, z):
-        return self.decoder(z)
+        return self.decoder(z)  # Reconstructed input
 
     def forward(self, x):
+        # Encode to get mu and sigma
         mu, sigma = self.encode(x)
+        
+        # Sample from the latent space using the reparameterization trick
         z = self.reparameterize(mu, sigma)
-        return self.decode(z)
-
-    @torch.no_grad()
-    def sample(self, n):
-        self.eval()
-        z = torch.randn(n, self.latent_dim)
-        return self.decode(z)
+        
+        # Decode the sampled z to get the reconstruction
+        x_hat = self.decode(z)
+        
+        # Return reconstruction, mu, and sigma
+        return x_hat, mu, sigma
 
 # === Loss Function ===
 
@@ -66,24 +73,15 @@ def vae_loss(data, reconstruction, mu, log_var):
 
 # === Training Loop ===
 
-def train_vae(model, optimizer, dataloader, n_epochs=50):
+def train_vae(model, optimizer, dataloader, n_epochs=60):
     model.train()
     for epoch in range(n_epochs):
         total_loss = 0
         for batch in dataloader:
             x = batch[0]
-            x = x.view(x.size(0), -1)
+            x = x.view(x.size(0), -1)  # Flatten the data
             optimizer.zero_grad()
-            
-            # Debugging output of forward pass
-            output = model(x)
-            print(f"Output shape: {output.shape}")  # Add this line for debugging
-            if len(output) == 3:
-                x_hat, mu, sigma = output
-            else:
-                print(f"Unexpected output: {output}")
-                continue
-            
+            x_hat, mu, sigma = model(x)  # Unpack the 3 outputs
             loss = vae_loss(x, x_hat, mu, sigma)
             loss.backward()
             optimizer.step()
@@ -115,65 +113,66 @@ def clean_csv_data(file_path, fill_missing_numeric=0, fill_missing_categorical="
     print("🧽 Cleaning complete.")
     return df
 
-# === Main Pipeline ===
+# === Parameters for Customization ===
 
-if __name__ == "__main__":
-    # === Load and clean ===
-    input_csv = "trips_vae_input_max12.csv"
-    output_csv = "augmented_output.csv"
+# Set values for the parameters directly in the script
+latent_dim = 72  # Size of the latent dimension
+n_samples = 5040  # Number of synthetic samples to generate
+input_csv = "trips_vae_input_max12.csv"  # Path to your input CSV file
+output_csv = "trips_vae_output_raw.csv"  # Path to the output augmented CSV file
 
-    df = clean_csv_data(input_csv)
+# === Load and clean ===
+df = clean_csv_data(input_csv)
 
-    # === Re-identify columns after cleaning ===
-    categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-    numerical_cols = df.select_dtypes(include=["number"]).columns.tolist()
+# === Re-identify columns after cleaning ===
+categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+numerical_cols = df.select_dtypes(include=["number"]).columns.tolist()
 
-    # === Preprocessing ===
-    preprocessor = ColumnTransformer([
-        ("num", MinMaxScaler(), numerical_cols),
-        ("cat", OneHotEncoder(sparse_output=False, handle_unknown='ignore'), categorical_cols)
-    ])
+# === Preprocessing ===
+preprocessor = ColumnTransformer([
+    ("num", MinMaxScaler(), numerical_cols),
+    ("cat", OneHotEncoder(sparse_output=False, handle_unknown='ignore'), categorical_cols)
+])
 
-    processed_data = preprocessor.fit_transform(df)
-    processed_tensor = torch.tensor(processed_data, dtype=torch.float32)
-    dataloader = DataLoader(TensorDataset(processed_tensor), batch_size=64, shuffle=True)
+processed_data = preprocessor.fit_transform(df)
+processed_tensor = torch.tensor(processed_data, dtype=torch.float32)
+dataloader = DataLoader(TensorDataset(processed_tensor), batch_size=64, shuffle=True)
 
-    # === Train VAE ===
-    input_dim = processed_tensor.shape[1]
-    vae = VAE(input_dim=input_dim, latent_dim=32)
-    optimizer = torch.optim.Adam(vae.parameters(), lr=1e-3)
-    train_vae(vae, optimizer, dataloader)
+# === Train VAE ===
+input_dim = processed_tensor.shape[1]
+vae = VAE(input_dim=input_dim, latent_dim=latent_dim)
+optimizer = torch.optim.Adam(vae.parameters(), lr=1e-3)
+train_vae(vae, optimizer, dataloader)
 
-    # === Generate synthetic data ===
-    n_samples = len(df)
-    with torch.no_grad():
-        synthetic_data = vae.sample(n_samples).numpy()
-        synthetic_data = np.clip(synthetic_data, 0, 1)
+# === Generate synthetic data ===
+with torch.no_grad():
+    synthetic_data = vae.sample(n_samples).numpy()
+    synthetic_data = np.clip(synthetic_data, 0, 1)
 
-    # === Manually Inverse Transform the Data ===
+# === Manually Inverse Transform the Data ===
 
-    # Get transformer objects
-    ohe = preprocessor.named_transformers_["cat"]
-    scaler = preprocessor.named_transformers_["num"]
+# Get transformer objects
+ohe = preprocessor.named_transformers_["cat"]
+scaler = preprocessor.named_transformers_["num"]
 
-    # Split synthetic data back into numeric and categorical parts
-    num_features = len(numerical_cols)
-    synthetic_num = synthetic_data[:, :num_features]
-    synthetic_cat = synthetic_data[:, num_features:]
+# Split synthetic data back into numeric and categorical parts
+num_features = len(numerical_cols)
+synthetic_num = synthetic_data[:, :num_features]
+synthetic_cat = synthetic_data[:, num_features:]
 
-    # Inverse transform the numeric and categorical parts separately
-    decoded_num = scaler.inverse_transform(synthetic_num)
-    decoded_cat = ohe.inverse_transform(synthetic_cat)
+# Inverse transform the numeric and categorical parts separately
+decoded_num = scaler.inverse_transform(synthetic_num)
+decoded_cat = ohe.inverse_transform(synthetic_cat)
 
-    # Recombine numeric and categorical data
-    decoded_full = np.concatenate([decoded_num, decoded_cat], axis=1)
+# Recombine numeric and categorical data
+decoded_full = np.concatenate([decoded_num, decoded_cat], axis=1)
 
-    # Create DataFrame for the decoded synthetic data
-    decoded_df = pd.DataFrame(decoded_full, columns=numerical_cols + categorical_cols)
-    decoded_df["source"] = "synthetic"
+# Create DataFrame for the decoded synthetic data
+decoded_df = pd.DataFrame(decoded_full, columns=numerical_cols + categorical_cols)
+decoded_df["source"] = "synthetic"
 
-    # === Combine and save ===
-    df["source"] = "original"
-    augmented_df = pd.concat([df, decoded_df], ignore_index=True)
-    augmented_df.to_csv(output_csv, index=False)
-    print(f"✅ Augmented CSV saved to {output_csv}")
+# === Combine and save ===
+df["source"] = "original"
+augmented_df = pd.concat([df, decoded_df], ignore_index=True)
+augmented_df.to_csv(output_csv, index=False)
+print(f"✅ Augmented CSV saved to {output_csv}")
