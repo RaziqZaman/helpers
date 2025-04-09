@@ -119,9 +119,10 @@ if __name__ == "__main__":
     numerical_cols = df.select_dtypes(include=["number"]).columns.tolist()
 
     # === Preprocessing ===
+    ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
     preprocessor = ColumnTransformer([
         ("num", MinMaxScaler(), numerical_cols),
-        ("cat", OneHotEncoder(sparse=False, handle_unknown='ignore'), categorical_cols)
+        ("cat", ohe, categorical_cols)
     ])
 
     processed_data = preprocessor.fit_transform(df)
