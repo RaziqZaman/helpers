@@ -92,66 +92,47 @@ def train_vae(
 
         print(f"Epoch {epoch} |loss: {loss.item()}")
 
-# processing
+### processing
 
-# Load your CSV
-csv_file = "trips_vae_input_max12.csv"
-df = pd.read_csv(csv_file)
+# === 1. Load your CSV ===
+df = pd.read_csv("trips_vae_input_max12.csv")
 
-# Identify categorical columns
-categorical_columns = ['household_id', 'area_type', 'home_state_county_fips', 'home_type', 'home_ownership',
-                        'person_id', 'age_group', 'gender', 'race_ethnicity', 'race_ethnicity_hispanic', 'license', 'employment_status', 'work_bmc_taz', 'student_status']  # Update with actual column names
-trip_variables = ['tripid', 'o_activity', 'o_state_county_fips', 'o_bmc_taz', 'd_activity', 'd_state_county_fips', 'd_bmc_taz', 'travel_mode']
-new_vars = [f"{var}-trip{i}" for i in range(1, 13) for var in trip_variables]
-categorical_columns += new_vars
-numeric_columns = [col for col in df.columns if col not in categorical_columns]
+# === 2. Identify categorical and numerical columns ===
+categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+numerical_cols = df.select_dtypes(include=["number"]).columns.tolist()
 
-# One-hot encode categorical columns
-df_encoded = pd.get_dummies(df, columns=categorical_columns)
+# === 3. Create transformer ===
+preprocessor = ColumnTransformer([
+    ("num", MinMaxScaler(), numerical_cols),
+    ("cat", OneHotEncoder(sparse=False, handle_unknown='ignore'), categorical_cols)
+])
 
-# Normalize numerical data
-scaler = MinMaxScaler()
-df_encoded[numeric_columns] = scaler.fit_transform(df_encoded[numeric_columns])
+# === 4. Fit and transform data ===
+processed_data = preprocessor.fit_transform(df)
+processed_tensor = torch.tensor(processed_data, dtype=torch.float32)
 
-# Convert to tensor
-data_tensor = torch.tensor(df_encoded.values, dtype=torch.float32)
+# === 5. Prepare DataLoader ===
+dataset = TensorDataset(processed_tensor)
+dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
 
-# Define input dimensions
-input_dim = data_tensor.shape[216]  # Number of features in your CSV
-latent_dim = 108  # Adjust if needed
-
-# Initialize model and optimizer
-vae = VAE(input_dim, latent_dim)
+# === 6. Define and train the VAE ===
+from vae_model import VAE, train_vae  # Assuming you saved your model in vae_model.py
+input_dim = processed_tensor.shape[1]
+vae = VAE(input_dim=input_dim, latent_dim=32)
 optimizer = torch.optim.Adam(vae.parameters(), lr=1e-3)
+train_vae(vae, optimizer, dataloader, n_epochs=50)
 
-# Train the VAE
-train_vae(vae, optimizer, dataloader, n_epochs=60, save_path="vae_model.pth")
-
-# Load trained model (if needed)
-vae.load_state_dict(torch.load("vae_model.pth"))
+# === 7. Sample synthetic data ===
 vae.eval()
+with torch.no_grad():
+    n_synthetic = len(df)
+    synthetic = vae.sample(n_synthetic).numpy()
+    synthetic = np.clip(synthetic, 0, 1)  # just in case some values go out of range
 
-# Generate synthetic data
-n_samples = 120  # Adjust based on how much augmented data you need
-generated_data = vae.sample(n_samples)
+# === 8. Inverse transform to original space ===
+synthetic_original = preprocessor.inverse_transform(synthetic)
 
-# Convert to a Pandas DataFrame
-generated_df = pd.DataFrame(generated_data.numpy(), columns=df.columns)
-
-# Save to CSV
-generated_df.to_csv("augmented_data.csv", index=False)
-
-# Convert generated tensor to DataFrame
-generated_df = pd.DataFrame(generated_data.numpy(), columns=df_encoded.columns)
-
-# Reverse normalization for numeric columns
-generated_df[numeric_columns] = scaler.inverse_transform(generated_df[numeric_columns])
-
-# Reverse one-hot encoding
-for col in categorical_columns:
-    category_prefix = [c for c in generated_df.columns if c.startswith(col + "_")]
-    generated_df[col] = generated_df[category_prefix].idxmax(axis=1).str[len(col) + 1:]
-    generated_df.drop(columns=category_prefix, inplace=True)
-
-# Save final augmented dataset
-generated_df.to_csv("augmented_data_decoded.csv", index=False)
+# === 9. Create and save final augmented CSV ===
+synthetic_df = pd.DataFrame(synthetic_original, columns=numerical_cols + list(preprocessor.named_transformers_["cat"].get_feature_names_out(categorical_cols)))
+augmented_df = pd.concat([df, synthetic_df], ignore_index=True)
+augmented_df.to_csv("augmented_output.csv", index=False)
