@@ -49,7 +49,7 @@ class VAE(nn.Module):
     def forward(self, x):
         mu, sigma = self.encode(x)
         z = self.reparameterize(mu, sigma)
-        return self.decode(z), mu, sigma
+        return self.decode(z)
 
     @torch.no_grad()
     def sample(self, n):
@@ -74,11 +74,21 @@ def train_vae(model, optimizer, dataloader, n_epochs=50):
             x = batch[0]
             x = x.view(x.size(0), -1)
             optimizer.zero_grad()
-            x_hat, mu, sigma = model(x)
+            
+            # Debugging output of forward pass
+            output = model(x)
+            print(f"Output shape: {output.shape}")  # Add this line for debugging
+            if len(output) == 3:
+                x_hat, mu, sigma = output
+            else:
+                print(f"Unexpected output: {output}")
+                continue
+            
             loss = vae_loss(x, x_hat, mu, sigma)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+        
         print(f"Epoch {epoch + 1}/{n_epochs} - Loss: {total_loss:.2f}")
 
 # === Cleaning Utility ===
@@ -119,10 +129,9 @@ if __name__ == "__main__":
     numerical_cols = df.select_dtypes(include=["number"]).columns.tolist()
 
     # === Preprocessing ===
-    ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
     preprocessor = ColumnTransformer([
         ("num", MinMaxScaler(), numerical_cols),
-        ("cat", ohe, categorical_cols)
+        ("cat", OneHotEncoder(sparse_output=False, handle_unknown='ignore'), categorical_cols)
     ])
 
     processed_data = preprocessor.fit_transform(df)
@@ -131,7 +140,7 @@ if __name__ == "__main__":
 
     # === Train VAE ===
     input_dim = processed_tensor.shape[1]
-    vae = VAE(input_dim=input_dim, latent_dim=36)
+    vae = VAE(input_dim=input_dim, latent_dim=32)
     optimizer = torch.optim.Adam(vae.parameters(), lr=1e-3)
     train_vae(vae, optimizer, dataloader)
 
@@ -140,16 +149,31 @@ if __name__ == "__main__":
     with torch.no_grad():
         synthetic_data = vae.sample(n_samples).numpy()
         synthetic_data = np.clip(synthetic_data, 0, 1)
-        synthetic_original = preprocessor.inverse_transform(synthetic_data)
+
+    # === Manually Inverse Transform the Data ===
+
+    # Get transformer objects
+    ohe = preprocessor.named_transformers_["cat"]
+    scaler = preprocessor.named_transformers_["num"]
+
+    # Split synthetic data back into numeric and categorical parts
+    num_features = len(numerical_cols)
+    synthetic_num = synthetic_data[:, :num_features]
+    synthetic_cat = synthetic_data[:, num_features:]
+
+    # Inverse transform the numeric and categorical parts separately
+    decoded_num = scaler.inverse_transform(synthetic_num)
+    decoded_cat = ohe.inverse_transform(synthetic_cat)
+
+    # Recombine numeric and categorical data
+    decoded_full = np.concatenate([decoded_num, decoded_cat], axis=1)
+
+    # Create DataFrame for the decoded synthetic data
+    decoded_df = pd.DataFrame(decoded_full, columns=numerical_cols + categorical_cols)
+    decoded_df["source"] = "synthetic"
 
     # === Combine and save ===
-    synthetic_df = pd.DataFrame(synthetic_original, columns=numerical_cols + list(preprocessor.named_transformers_["cat"].get_feature_names_out(categorical_cols)))
-    synthetic_df = synthetic_df[df.columns]  # Reorder columns to match original
-
-    # Tag data sources
     df["source"] = "original"
-    synthetic_df["source"] = "synthetic"
-
-    augmented_df = pd.concat([df, synthetic_df], ignore_index=True)
+    augmented_df = pd.concat([df, decoded_df], ignore_index=True)
     augmented_df.to_csv(output_csv, index=False)
     print(f"✅ Augmented CSV saved to {output_csv}")
