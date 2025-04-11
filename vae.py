@@ -64,6 +64,11 @@ class VAE(nn.Module):
         # Return reconstruction, mu, and sigma
         return x_hat, mu, sigma
 
+    @torch.no_grad()
+    def sample(self, n):
+        self.eval()
+        z = torch.randn(n, self.latent_dim)
+        return self.decode(z)
 # === Loss Function ===
 
 def vae_loss(data, reconstruction, mu, log_var):
@@ -73,7 +78,7 @@ def vae_loss(data, reconstruction, mu, log_var):
 
 # === Training Loop ===
 
-def train_vae(model, optimizer, dataloader, n_epochs=60):
+def train_vae(model, optimizer, dataloader, n_epochs=120):
     model.train()
     for epoch in range(n_epochs):
         total_loss = 0
@@ -116,10 +121,10 @@ def clean_csv_data(file_path, fill_missing_numeric=0, fill_missing_categorical="
 # === Parameters for Customization ===
 
 # Set values for the parameters directly in the script
-latent_dim = 72  # Size of the latent dimension
-n_samples = 5040  # Number of synthetic samples to generate
+latent_dim = 108  # Size of the latent dimension
+n_samples = 110880  # Number of synthetic samples to generate (population of Maryland in 2018 according to MARYLAND VITAL STATISTICS ANNUAL REPORT)
 input_csv = "trips_vae_input_max12.csv"  # Path to your input CSV file
-output_csv = "trips_vae_output_raw.csv"  # Path to the output augmented CSV file
+output_csv = "trips_vae_output_raw_110880.csv"  # Path to the output augmented CSV file
 
 # === Load and clean ===
 df = clean_csv_data(input_csv)
